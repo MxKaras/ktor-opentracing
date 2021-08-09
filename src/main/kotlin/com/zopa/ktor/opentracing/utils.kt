@@ -3,11 +3,15 @@ package com.zopa.ktor.opentracing
 import io.opentracing.Span
 import io.opentracing.Tracer
 import io.opentracing.noop.NoopTracerFactory
+import io.opentracing.tag.Tags
 import io.opentracing.util.GlobalTracer
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ThreadContextElement
+import kotlinx.coroutines.asContextElement
 import mu.KotlinLogging
 import java.io.PrintWriter
 import java.io.StringWriter
+import java.util.Stack
 import kotlin.coroutines.coroutineContext
 
 
@@ -30,6 +34,37 @@ fun getGlobalTracer(): Tracer {
     return GlobalTracer.get()
         ?: NoopTracerFactory.create()
             .also { log.warn("Tracer not registered in GlobalTracer. Using Noop tracer instead.") }
+}
+
+suspend fun rootSpanContext(span: Span): ThreadContextElement<Stack<Span>> {
+    span.addConfiguredLambdaTags()
+    span.addCleanup()
+
+    val spanStack = Stack<Span>()
+    spanStack.push(span)
+
+    return threadLocalSpanStack.asContextElement(spanStack)
+}
+
+fun closeSpan(statusCode: Int?) {
+    val spanStack = threadLocalSpanStack.get()
+    if (spanStack == null) {
+        log.warn("spanStack is null")
+        return
+    }
+
+    if (spanStack.isEmpty()) {
+        log.error("Span could not be found in thread local trace context")
+        return
+    }
+    val span = spanStack.pop()
+
+    Tags.HTTP_STATUS.set(span, statusCode)
+    if (statusCode == null || statusCode >= 400) {
+        span.setTag("error", true)
+    }
+
+    span.finish()
 }
 
 internal suspend fun Span.addCleanup() {

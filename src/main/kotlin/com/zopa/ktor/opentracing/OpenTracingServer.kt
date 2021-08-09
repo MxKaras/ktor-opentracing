@@ -11,16 +11,13 @@ import io.ktor.request.path
 import io.ktor.routing.Routing
 import io.ktor.util.AttributeKey
 import io.ktor.util.pipeline.PipelinePhase
-import io.opentracing.Span
 import io.opentracing.SpanContext
 import io.opentracing.Tracer
 import io.opentracing.propagation.Format
 import io.opentracing.propagation.TextMapAdapter
 import io.opentracing.tag.Tags
 import io.opentracing.util.GlobalTracer
-import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.withContext
-import java.util.Stack
 
 
 class OpenTracingServer {
@@ -72,13 +69,7 @@ class OpenTracingServer {
 
                 val span = spanBuilder.start()
 
-                span.addConfiguredLambdaTags()
-                span.addCleanup()
-
-                val spanStack = Stack<Span>()
-                spanStack.push(span)
-
-                withContext(threadLocalSpanStack.asContextElement(spanStack)) {
+                withContext(rootSpanContext(span)) {
                     proceed()
                 }
             }
@@ -99,25 +90,8 @@ class OpenTracingServer {
             pipeline.intercept(tracingPhaseFinish) {
                 if (config.filters.any { it(call) }) return@intercept
 
-                val spanStack = threadLocalSpanStack.get()
-                if (spanStack == null) {
-                    log.warn("spanStack is null")
-                    return@intercept
-                }
-
-                if (spanStack.isEmpty()) {
-                    log.error("Active span could not be found in thread local trace context")
-                    return@intercept
-                }
-                val span = spanStack.pop()
-
                 val statusCode = context.response.status()
-                Tags.HTTP_STATUS.set(span, statusCode?.value)
-                if (statusCode == null || statusCode.value >= 400) {
-                    span.setTag("error", true)
-                }
-
-                span.finish()
+                closeSpan(statusCode?.value)
             }
 
             return feature

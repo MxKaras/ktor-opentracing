@@ -50,23 +50,8 @@ class OpenTracingClient {
             }
 
             scope.receivePipeline.intercept(HttpReceivePipeline.State) {
-                val spanStack = threadLocalSpanStack.get()
-                if (spanStack == null) {
-                    log.warn("spanStack is null")
-                    return@intercept
-                }
-
-                if (spanStack.isEmpty()) {
-                    log.error("span could not be found in thread local span context")
-                    return@intercept
-                }
-                val span = spanStack.pop()
-
                 val statusCode = context.response.status
-                Tags.HTTP_STATUS.set(span, statusCode.value)
-                if (statusCode.value >= 400) span.setTag("error", true)
-
-                span.finish()
+                closeSpan(statusCode.value)
             }
         }
     }
